@@ -1,0 +1,60 @@
+[
+  {
+    "runId": "local",
+    "model": "claude-sonnet-4-6",
+    "fixtures": 3,
+    "aggregate": {
+      "perSpecialist": [
+        {
+          "specialist": "security",
+          "goldCount": 2,
+          "foundCount": 3,
+          "truePositives": 2,
+          "precision": 0.6666666666666666,
+          "recall": 1,
+          "f1": 0.8
+        },
+        {
+          "specialist": "correctness",
+          "goldCount": 3,
+          "foundCount": 11,
+          "truePositives": 3,
+          "precision": 0.2727272727272727,
+          "recall": 1,
+          "f1": 0.42857142857142855
+        },
+        {
+          "specialist": "tests",
+          "goldCount": 2,
+          "foundCount": 17,
+          "truePositives": 2,
+          "precision": 0.11764705882352941,
+          "recall": 1,
+          "f1": 0.21052631578947367
+        },
+        {
+          "specialist": "style",
+          "goldCount": 1,
+          "foundCount": 12,
+          "truePositives": 1,
+          "precision": 0.08333333333333333,
+          "recall": 1,
+          "f1": 0.15384615384615385
+        }
+      ],
+      "overall": {
+        "goldCount": 8,
+        "foundCount": 43,
+        "truePositives": 8,
+        "precision": 0.18604651162790697,
+        "recall": 1,
+        "f1": 0.3137254901960785
+      }
+    },
+    "parallelism": {
+      "totalAgentMs": 137284,
+      "totalWallMs": 48565,
+      "speedup": 2.8267883022416043
+    }
+  }
+]
