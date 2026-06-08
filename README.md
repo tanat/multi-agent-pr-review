@@ -1,36 +1,110 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Multi-agent PR Review
 
-## Getting Started
+> Paste a GitHub PR URL. Four specialist agents — **security, correctness, tests,
+> style** — review the diff **in parallel**, an orchestrator dedups and merges
+> their findings, and **you approve each finding** before anything is published.
+> The whole run is a durable state machine: it survives a restart and the
+> hours-long human pause, then **resumes from its checkpoint**.
 
-First, run the development server:
+This is the multi-agent capstone of the portfolio. Where the earlier projects
+isolate one primitive each, this one integrates the three patterns that are
+hardest to demo well: **multi-agent orchestration**, **human-in-the-loop**, and
+**durable / resumable execution**.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Wow moment
+
+You paste a PR URL and hit **Review**. Four agents fan out at once; a few seconds
+later a ranked list of findings appears — each tagged by specialist and severity,
+each with a rationale grounded in the diff and a concrete suggestion. You approve
+the ones worth keeping and reject the noise, then **Publish** renders a clean PR
+comment (or posts it for real, if you opt in).
+
+On a real PR ([`sindresorhus/p-map#77`](https://github.com/sindresorhus/p-map/pull/77),
+a concurrency fix) the correctness agent caught a genuine race condition the diff
+re-introduced — the counter is incremented *after* an `await`, so the concurrency
+guard lets extra tasks through.
+
+## How it works
+
+```
+PR URL
+  │ POST /api/review  → create run (status: reviewing), return runId immediately
+  ▼
+fetch diff (Octokit, read-only)
+  │
+  ▼  run in parallel (Promise.all), grouped under one Langfuse session
+┌───────────┬─────────────┬───────────┬──────────┐
+│ security  │ correctness │   tests   │  style   │   ← generateObject, one lens each
+└───────────┴─────────────┴───────────┴──────────┘
+  │ orchestrator: dedup (file+line+title) + idempotent persist
+  ▼
+status: awaiting_approval ──── you approve / reject (HITL) ────┐
+  ▲                                                            ▼
+  └──── resumeRun() re-drives from checkpoint ───────  POST /publish → done
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The run lives in Postgres (`runs` + `findings`), so every step is idempotent and
+the orchestration is **resumable**: if the process dies mid-review, completed
+specialists are skipped on resume; if it dies mid-publish, already-published
+findings are skipped. That's the point of the project — a review that can wait for
+a human for hours and pick up exactly where it left off.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Eval
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Adversarial: PR diffs with **deliberately planted bugs** (`evals/`). The harness
+runs the real specialists and scores findings against the gold set.
 
-## Learn More
+| Metric | Result (sonnet) |
+| --- | --- |
+| Recall (planted bugs caught) | **1.00** (8/8) |
+| Precision | 0.19 (heavy over-flagging) |
+| Parallelism speedup | **2.83×** (137s of agent work in 48s wall) |
 
-To learn more about Next.js, take a look at the following resources:
+Low precision is expected — and it's *why the product has a human approval step*.
+The models also flag real, un-planted issues, so precision is a lower bound. Full
+methodology and honesty notes in [evals/README.md](./evals/README.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Stack
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Layer | Choice |
+| --- | --- |
+| Framework | Next.js 16 (App Router) + React 19 |
+| Agents | Vercel AI SDK `generateObject` (Zod-typed findings), hand-rolled orchestration |
+| Models | Claude Sonnet 4.6 / GPT-4o / Gemini 2.5 via the AI Gateway (one key) |
+| Durable state | Supabase Postgres (`runs` + `findings`), `postgres.js` server-side |
+| Source | GitHub REST via `@octokit/rest` (read-only fetch; opt-in comment posting) |
+| Observability | Langfuse + OpenTelemetry (specialists grouped per run) |
 
-## Deploy on Vercel
+## Running locally
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+pnpm install
+pnpm db:start          # local Supabase (Docker) — Postgres :54322
+pnpm db:reset          # apply the runs/findings migration
+cp .env.example .env.local   # set AI_GATEWAY_API_KEY + GITHUB_TOKEN (read-only PAT)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+pnpm dev               # http://localhost:3000 — paste a PR URL
+pnpm review <pr-url>   # same flow from the CLI (review → approve all → publish)
+pnpm eval              # adversarial eval over planted-bug fixtures
+```
+
+`SUPABASE_URL`/`DATABASE_URL` default to the local stack; `pnpm db:status` prints
+them. Langfuse and the real-comment publish path are optional (see `.env.example`).
+
+## Deploy
+
+Same stack in prod: hosted Supabase + Vercel.
+
+```bash
+pnpm supabase link --project-ref <ref> && pnpm supabase db push
+```
+
+Set `AI_GATEWAY_API_KEY`, `GITHUB_TOKEN`, `DATABASE_URL`, `SUPABASE_URL` on Vercel.
+A durable store is required because Vercel functions are stateless and the human
+pause outlives any single invocation — local SQLite would not survive it.
+
+## Docs
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) — state machine, orchestration, observability
+- [DECISIONS.md](./DECISIONS.md) — the forks, with rationale and cost
+- [evals/README.md](./evals/README.md) — eval methodology
