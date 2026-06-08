@@ -22,11 +22,11 @@ export interface ReviewStartResult {
   status: string;
 }
 
-/** Entry point: parse + fetch the PR, create the run, then drive the review. */
-export async function startReview(prUrl: string, modelKey: ModelKey = 'sonnet'): Promise<string> {
+/** Parse + fetch the PR and create the run row (status 'reviewing'). */
+export async function createReview(prUrl: string, modelKey: ModelKey = 'sonnet'): Promise<string> {
   const { owner, repo, number } = parsePrUrl(prUrl);
   const pr = await fetchPr(owner, repo, number);
-  const runId = await store.createRun({
+  return store.createRun({
     prUrl,
     owner,
     repo,
@@ -34,6 +34,11 @@ export async function startReview(prUrl: string, modelKey: ModelKey = 'sonnet'):
     title: pr.title,
     model: MODEL_IDS[modelKey],
   });
+}
+
+/** Create the run and drive the review to completion (used by the CLI). */
+export async function startReview(prUrl: string, modelKey: ModelKey = 'sonnet'): Promise<string> {
+  const runId = await createReview(prUrl, modelKey);
   await reviewRun(runId, modelKey);
   return runId;
 }
