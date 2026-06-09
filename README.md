@@ -6,10 +6,9 @@
 > The whole run is a durable state machine: it survives a restart and the
 > hours-long human pause, then **resumes from its checkpoint**.
 
-This is the multi-agent capstone of the portfolio. Where the earlier projects
-isolate one primitive each, this one integrates the three patterns that are
-hardest to demo well: **multi-agent orchestration**, **human-in-the-loop**, and
-**durable / resumable execution**.
+It integrates, in one product, the three patterns that are hardest to demo well
+together: **multi-agent orchestration**, **human-in-the-loop**, and **durable /
+resumable execution**.
 
 ## Wow moment
 
