@@ -4,6 +4,12 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Decision, Run, StoredFinding } from '@/lib/schemas';
 
 const MODELS = ['sonnet', 'gpt-4o', 'gemini-flash', 'gemini-pro'] as const;
+const MODEL_LABELS: Record<(typeof MODELS)[number], string> = {
+  sonnet: 'Claude Sonnet',
+  'gpt-4o': 'GPT-4o',
+  'gemini-flash': 'Gemini Flash',
+  'gemini-pro': 'Gemini Pro',
+};
 
 /* ---- presentation-only metadata (no behavior) ---- */
 
@@ -356,7 +362,7 @@ export default function Home() {
                 >
                   {MODELS.map((m) => (
                     <option key={m} value={m}>
-                      {m}
+                      {MODEL_LABELS[m]}
                     </option>
                   ))}
                 </select>
