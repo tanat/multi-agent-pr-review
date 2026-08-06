@@ -172,8 +172,27 @@ export async function getFindings(runId: string): Promise<StoredFinding[]> {
     );
 }
 
-export async function setDecision(findingId: string, decision: Decision): Promise<void> {
-  await db`UPDATE findings SET decision = ${decision} WHERE id = ${findingId}`;
+/**
+ * Set one finding's decision, scoped to its run.
+ *
+ * The run id is not decoration. Without it the statement is "update whichever
+ * finding carries this id", so a request aimed at run A can flip a finding that
+ * belongs to run B — the route already knows which run it is acting on and used
+ * to throw that knowledge away. Returns false when nothing matched, so the
+ * caller can answer 404 instead of reporting success for a write that did not
+ * happen.
+ */
+export async function setDecision(
+  runId: string,
+  findingId: string,
+  decision: Decision,
+): Promise<boolean> {
+  const rows = await db<{ id: string }[]>`
+    UPDATE findings SET decision = ${decision}
+    WHERE id = ${findingId} AND run_id = ${runId}
+    RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 /** Bulk-set decisions for one run (e.g. approve-all). */

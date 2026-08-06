@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createReview, reviewRun } from '@/lib/orchestrator';
 import { InvalidPrUrlError } from '@/lib/github';
 import { MODEL_IDS, type ModelKey } from '@/lib/models';
+import { REVIEW_RATE_LIMIT, clientKey, withinRateLimit } from '@/lib/guard';
 import { langfuseSpanProcessor } from '@/instrumentation';
 
 export const runtime = 'nodejs';
@@ -14,6 +15,17 @@ const Body = z.object({
 });
 
 export async function POST(req: Request) {
+  // This is the endpoint that spends money: one call fans out to four models.
+  // It is public by design so a reader can try the demo, which makes a ceiling
+  // the only thing standing between that and an open tab spending the
+  // deployer's gateway credits in a loop.
+  if (!withinRateLimit(clientKey(req))) {
+    return Response.json(
+      { error: `rate limit: ${REVIEW_RATE_LIMIT} reviews per minute` },
+      { status: 429 },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

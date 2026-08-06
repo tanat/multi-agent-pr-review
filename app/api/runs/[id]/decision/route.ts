@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { setAllDecisions, setDecision } from '@/db/runs';
+import { getRun, setAllDecisions, setDecision } from '@/db/runs';
 
 export const runtime = 'nodejs';
 
@@ -18,10 +18,28 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       { status: 400 },
     );
   }
+
+  const run = await getRun(id);
+  if (!run) return Response.json({ error: 'run not found' }, { status: 404 });
+
+  // Triage is only meaningful while the run is waiting for it. Accepting a
+  // decision on a finished run produced a state the product cannot act on: a
+  // finding marked approved on a run whose publish step has already run, which
+  // will never be posted and gives no indication of that.
+  if (run.status !== 'awaiting_approval') {
+    return Response.json(
+      { error: `run is ${run.status}; decisions are only accepted while awaiting_approval` },
+      { status: 409 },
+    );
+  }
+
   if ('all' in parsed.data) {
     await setAllDecisions(id, parsed.data.all);
   } else {
-    await setDecision(parsed.data.findingId, parsed.data.decision);
+    const updated = await setDecision(id, parsed.data.findingId, parsed.data.decision);
+    if (!updated) {
+      return Response.json({ error: 'finding not found in this run' }, { status: 404 });
+    }
   }
   return Response.json({ ok: true });
 }
