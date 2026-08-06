@@ -4,34 +4,58 @@ config({ path: '.env.local' });
 config(); // fallback to .env
 import fs from 'node:fs';
 import path from 'node:path';
-import { FIXTURES } from './fixtures';
+import { createHash } from 'node:crypto';
+import { execSync } from 'node:child_process';
+import { FIXTURES, type Fixture } from './fixtures';
+import { toPrContext } from './to-pr-context';
+import { renderDiff } from '../lib/github';
 import { SPECIALIST_PROMPT_VERSION, runSpecialist } from '../lib/specialists';
 import { SPECIALISTS, type Finding, type Specialist } from '../lib/schemas';
-import { aggregate, scoreFixture, type SpecialistScore } from './score';
+import { MATCHER_VERSION, aggregate, scoreFixture, wilson, type SpecialistScore } from './score';
 import { MODEL_IDS, type ModelKey } from '../lib/models';
 import { vcrMode, withRecording } from './cache';
 
-function parseModel(): ModelKey {
-  const arg = process.argv.find((a) => a.startsWith('--model='))?.split('=')[1];
-  if (arg && arg in MODEL_IDS) return arg as ModelKey;
-  return 'sonnet';
+interface Args {
+  modelKey: ModelKey;
+  repeat: number;
+}
+
+function parseArgs(): Args {
+  const argv = process.argv.slice(2);
+  const get = (name: string) => argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1];
+
+  const model = get('model');
+  const modelKey = model && model in MODEL_IDS ? (model as ModelKey) : 'sonnet';
+
+  const raw = Number(get('repeat') ?? 1);
+  const repeat = Number.isFinite(raw) ? Math.min(Math.max(Math.trunc(raw), 1), 10) : 1;
+
+  return { modelKey, repeat };
 }
 
 /**
- * Run the four specialists on a diff in parallel.
+ * Run the four specialists on a fixture, through the same rendering path the
+ * app uses.
  *
- * Timings come from the recording when a run is replayed, so the per-agent
- * durations stay comparable across runs. Wall-clock does not: replaying four
- * files off disk finishes in microseconds and would report an absurd speedup.
- * The harness therefore only reports parallelism for runs that actually called
- * the model, rather than printing a number that measures the filesystem.
+ * Timings come from the recording on replay, so per-agent durations stay
+ * comparable. Wall-clock does not: replaying four files off disk finishes in
+ * microseconds and would report an absurd speedup, so parallelism is only
+ * reported for fixtures whose four agents all ran live.
  */
-async function reviewFixture(fixture: string, diff: string, modelKey: ModelKey) {
+async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey, sample: number) {
+  const diff = renderDiff(toPrContext(fixture, index));
   const wall0 = performance.now();
   const timed = await Promise.all(
     SPECIALISTS.map(async (s) => {
       const { findings, latencyMs, cached } = await withRecording(
-        { model: MODEL_IDS[modelKey], promptVersion: SPECIALIST_PROMPT_VERSION, fixture, specialist: s, diff },
+        {
+          model: MODEL_IDS[modelKey],
+          promptVersion: SPECIALIST_PROMPT_VERSION,
+          fixture: fixture.name,
+          specialist: s,
+          sample,
+          diff,
+        },
         async () => {
           const t = performance.now();
           const out = await runSpecialist(s, diff, modelKey, 'eval');
@@ -41,16 +65,41 @@ async function reviewFixture(fixture: string, diff: string, modelKey: ModelKey) 
       return { s, findings, ms: latencyMs, cached };
     }),
   );
-  const wallMs = performance.now() - wall0;
-  const sumMs = timed.reduce((a, r) => a + r.ms, 0);
   const bySpecialist = Object.fromEntries(timed.map((r) => [r.s, r.findings])) as Record<Specialist, Finding[]>;
-  return { bySpecialist, wallMs, sumMs, cachedCount: timed.filter((r) => r.cached).length };
+  return {
+    bySpecialist,
+    wallMs: performance.now() - wall0,
+    sumMs: timed.reduce((a, r) => a + r.ms, 0),
+    cachedCount: timed.filter((r) => r.cached).length,
+  };
+}
+
+function pct(v: number | null): string {
+  return v == null ? '   —  ' : `${(v * 100).toFixed(1).padStart(5)}%`;
+}
+
+/** Identifies the corpus, so rows measured against different fixtures are not compared. */
+function corpusFingerprint(): string {
+  const material = JSON.stringify(FIXTURES.map((f) => [f.name, f.diff, f.gold]));
+  return createHash('sha256').update(material).digest('hex').slice(0, 12);
+}
+
+function gitSha(): string | null {
+  try {
+    return execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
-  const modelKey = parseModel();
+  const { modelKey, repeat } = parseArgs();
   const mode = vcrMode();
-  console.log(`Adversarial eval — ${FIXTURES.length} fixtures, model=${modelKey}, vcr=${mode}\n`);
+  const clean = FIXTURES.filter((f) => f.gold.length === 0);
+  console.log(
+    `Adversarial eval — ${FIXTURES.length} fixtures (${clean.length} clean), ` +
+      `model=${modelKey}, repeat=${repeat}, vcr=${mode}\n`,
+  );
 
   const allScores: SpecialistScore[][] = [];
   let totalWall = 0;
@@ -58,65 +107,129 @@ async function main() {
   let cachedAgents = 0;
   let liveAgents = 0;
 
-  for (const fx of FIXTURES) {
-    const { bySpecialist, wallMs, sumMs, cachedCount } = await reviewFixture(fx.name, fx.diff, modelKey);
-    const scores = scoreFixture(bySpecialist, fx.gold);
-    allScores.push(scores);
-    cachedAgents += cachedCount;
-    liveAgents += SPECIALISTS.length - cachedCount;
-    // Only a fixture whose four agents all ran live contributes a meaningful
-    // wall-clock number; a partly-replayed one would understate it.
-    if (cachedCount === 0) {
-      totalWall += wallMs;
-      totalSum += sumMs;
+  // Findings emitted on a diff with nothing planted. The only place in the
+  // corpus where a false positive is unambiguous — everywhere else, a finding
+  // outside the gold set may still be a real defect we did not think to plant.
+  const noise: Record<Specialist, number> = { security: 0, correctness: 0, tests: 0, style: 0 };
+  // Recall split by whether the specialist's own prompt names the defect class.
+  const primed = { caught: 0, total: 0 };
+  const unprimed = { caught: 0, total: 0 };
+
+  for (let sample = 0; sample < repeat; sample++) {
+    for (const [index, fx] of FIXTURES.entries()) {
+      const { bySpecialist, wallMs, sumMs, cachedCount } = await reviewFixture(fx, index, modelKey, sample);
+      const scores = scoreFixture(bySpecialist, fx.gold);
+      allScores.push(scores);
+
+      cachedAgents += cachedCount;
+      liveAgents += SPECIALISTS.length - cachedCount;
+      if (cachedCount === 0) {
+        totalWall += wallMs;
+        totalSum += sumMs;
+      }
+
+      if (fx.gold.length === 0) {
+        for (const s of SPECIALISTS) noise[s] += bySpecialist[s].length;
+      }
+
+      const missed = new Set(scores.flatMap((r) => r.missedConcepts));
+      for (const g of fx.gold) {
+        const bucket = g.primed ? primed : unprimed;
+        bucket.total += 1;
+        if (!missed.has(g.concept)) bucket.caught += 1;
+      }
+
+      const found = scores.reduce((a, s) => a + s.foundCount, 0);
+      const tp = scores.reduce((a, s) => a + s.truePositives, 0);
+      const near = scores.reduce((a, s) => a + s.nearMisses, 0);
+      const label = repeat > 1 ? `${fx.name} #${sample + 1}` : fx.name;
+      const timing = cachedCount === SPECIALISTS.length ? 'replayed' : `wall=${wallMs.toFixed(0)}ms`;
+      console.log(
+        `${label.padEnd(26)} gold=${String(fx.gold.length).padStart(2)} found=${String(found).padStart(3)} ` +
+          `caught=${String(tp).padStart(2)} near=${String(near).padStart(2)} ${timing}`,
+      );
     }
-    const found = scores.reduce((a, s) => a + s.foundCount, 0);
-    const tp = scores.reduce((a, s) => a + s.truePositives, 0);
-    const gold = scores.reduce((a, s) => a + s.goldCount, 0);
-    const timing = cachedCount === SPECIALISTS.length ? 'replayed' : `wall=${wallMs.toFixed(0)}ms`;
-    console.log(`${fx.name.padEnd(22)} gold=${gold} found=${found} tp=${tp} ${timing}`);
   }
 
   const agg = aggregate(allScores);
-  console.log('\nPer-specialist (micro-avg over fixtures):');
-  console.log('  specialist    gold found  tp   precision recall  f1');
+
+  console.log('\nPer-specialist (micro-average over fixtures):');
+  console.log('  specialist    gold found caught near  precision  recall');
   for (const s of agg.perSpecialist) {
     console.log(
-      `  ${s.specialist.padEnd(12)} ${String(s.goldCount).padStart(3)} ${String(s.foundCount).padStart(4)} ` +
-        `${String(s.truePositives).padStart(3)}   ${s.precision.toFixed(2).padStart(7)} ${s.recall.toFixed(2).padStart(6)} ${s.f1.toFixed(2)}`,
+      `  ${s.specialist.padEnd(12)} ${String(s.goldCount).padStart(4)} ${String(s.foundCount).padStart(5)} ` +
+        `${String(s.truePositives).padStart(6)} ${String(s.nearMisses).padStart(4)}  ` +
+        `${pct(s.precision)}  ${pct(s.recall)}`,
     );
   }
+
   const o = agg.overall;
+  const ci = agg.recallInterval;
   console.log(
-    `\nOverall: precision=${o.precision.toFixed(2)} recall=${o.recall.toFixed(2)} f1=${o.f1.toFixed(2)} ` +
-      `(tp=${o.truePositives}/gold=${o.goldCount}, found=${o.foundCount})`,
+    `\nOverall recall ${pct(o.recall)} (${o.truePositives}/${o.goldCount})` +
+      (ci ? `, 95% CI [${(ci.low * 100).toFixed(1)}%, ${(ci.high * 100).toFixed(1)}%]` : ''),
   );
+  console.log(`Overall precision ${pct(o.precision)} — a lower bound: findings outside the gold set may still be real.`);
+
+  const primedRate = primed.total ? primed.caught / primed.total : null;
+  const unprimedRate = unprimed.total ? unprimed.caught / unprimed.total : null;
+  console.log(
+    `\nDefect classes the prompt names:        ${pct(primedRate)} (${primed.caught}/${primed.total})`,
+  );
+  console.log(
+    `Defect classes the prompt does not name: ${pct(unprimedRate)} (${unprimed.caught}/${unprimed.total})`,
+  );
+  console.log('  A large gap means the lenses are matching keywords from their own instructions.');
+
+  const cleanRuns = clean.length * repeat;
+  if (cleanRuns > 0) {
+    console.log(`\nFindings per clean diff (nothing planted — unambiguous noise):`);
+    for (const s of SPECIALISTS) {
+      console.log(`  ${s.padEnd(12)} ${(noise[s] / cleanRuns).toFixed(2)}`);
+    }
+  }
+
+  if (agg.topMissedConcepts.length > 0) {
+    console.log('\nMost-missed defects:');
+    for (const m of agg.topMissedConcepts.slice(0, 8)) {
+      console.log(`  ${String(m.misses).padStart(3)}×  ${m.concept}`);
+    }
+  }
+
   const parallelism =
     totalWall > 0
       ? { totalAgentMs: Math.round(totalSum), totalWallMs: Math.round(totalWall), speedup: totalSum / totalWall }
       : null;
-
-  if (parallelism) {
-    console.log(
-      `Parallelism: ${totalSum.toFixed(0)}ms of agent work in ${totalWall.toFixed(0)}ms wall = ` +
-        `${parallelism.speedup.toFixed(2)}x speedup from running specialists concurrently.`,
-    );
-  } else {
-    console.log('Parallelism: not measured — every fixture was replayed from cache.');
-  }
+  console.log(
+    parallelism
+      ? `\nParallelism: ${totalSum.toFixed(0)}ms of agent work in ${totalWall.toFixed(0)}ms wall = ${parallelism.speedup.toFixed(2)}×.`
+      : '\nParallelism: not measured — every fixture was replayed from cache.',
+  );
   console.log(`Agents: ${liveAgents} live, ${cachedAgents} replayed.`);
 
   const out = {
-    runId: process.env.EVAL_RUN_ID ?? 'local',
+    runId: process.env.EVAL_RUN_ID ?? new Date().toISOString(),
     model: MODEL_IDS[modelKey],
     promptVersion: SPECIALIST_PROMPT_VERSION,
+    // Without these three, rows either side of a change are silently
+    // incomparable — which is how a matcher nobody could compare against
+    // anything went unexamined.
+    matcherVersion: MATCHER_VERSION,
+    corpus: corpusFingerprint(),
+    gitSha: gitSha(),
     fixtures: FIXTURES.length,
-    // Recorded so a run can never be mistaken for a fresh measurement of the
-    // model when it was mostly a measurement of the disk.
+    cleanFixtures: clean.length,
+    repeat,
     agents: { live: liveAgents, replayed: cachedAgents },
     aggregate: agg,
+    primedRecall: { ...primed, rate: primedRate, interval: wilson(primed.caught, primed.total) },
+    unprimedRecall: { ...unprimed, rate: unprimedRate, interval: wilson(unprimed.caught, unprimed.total) },
+    noisePerCleanDiff: Object.fromEntries(
+      SPECIALISTS.map((s) => [s, cleanRuns ? noise[s] / cleanRuns : null]),
+    ),
     parallelism,
   };
+
   const resultsPath = path.join(process.cwd(), 'evals', 'results.json');
   let history: unknown[] = [];
   if (fs.existsSync(resultsPath)) {
