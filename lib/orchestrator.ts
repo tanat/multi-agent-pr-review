@@ -69,7 +69,7 @@ export async function reviewRun(runId: string, modelKey: ModelKey = 'sonnet'): P
       () =>
         Promise.all(
           todo.map(async (s) => {
-            const findings = await runSpecialist(s, diff, modelKey, runId);
+            const { findings } = await runSpecialist(s, diff, modelKey, runId);
             await store.insertFindings(runId, s, findings);
             await store.markSpecialistComplete(runId, s);
           }),

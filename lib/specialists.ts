@@ -1,6 +1,6 @@
 import { generateObject } from 'ai';
 import { SpecialistOutput, normaliseFinding, type Finding, type Specialist } from './schemas';
-import { modelFor, type ModelKey } from './models';
+import { modelFor, type ModelKey, type Usage } from './models';
 
 /**
  * Bumped whenever a lens or the shared instruction below changes. It is part of
@@ -42,14 +42,25 @@ const SHARED =
   'turns up nothing. At most 20 findings, highest severity first. Keep the title under 120 ' +
   'characters — a headline, not a paragraph; put the reasoning in the rationale.';
 
+export interface SpecialistRun {
+  findings: Finding[];
+  /**
+   * What this lens cost. Reported per specialist because the fan-out question —
+   * whether four lenses are worth four times the tokens — cannot be answered
+   * from a single total, and DECISIONS.md answers it today with a wall-clock
+   * speedup that is an arithmetic property of Promise.all.
+   */
+  usage: Usage;
+}
+
 /** Run one specialist over the diff and return its findings (structured). */
 export async function runSpecialist(
   specialist: Specialist,
   diff: string,
   modelKey: ModelKey,
   runId: string,
-): Promise<Finding[]> {
-  const { object } = await generateObject({
+): Promise<SpecialistRun> {
+  const { object, usage } = await generateObject({
     model: modelFor(modelKey),
     schema: SpecialistOutput,
     system: `${LENS[specialist]}\n\n${SHARED}`,
@@ -62,5 +73,11 @@ export async function runSpecialist(
       metadata: { runId, specialist, modelKey },
     },
   });
-  return object.findings.map(normaliseFinding);
+  return {
+    findings: object.findings.map(normaliseFinding),
+    usage: {
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+    },
+  };
 }

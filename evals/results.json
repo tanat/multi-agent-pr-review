@@ -242,5 +242,218 @@
       "totalWallMs": 310520,
       "speedup": 2.826178758646673
     }
+  },
+  {
+    "runId": "2026-08-06T20:10:57.901Z",
+    "model": "claude-sonnet-4-6",
+    "promptVersion": "v1.1.0",
+    "matcherVersion": "v2.0.0-concept",
+    "corpus": "cb825292ca13",
+    "gitSha": "e3ef676",
+    "fixtures": 16,
+    "cleanFixtures": 2,
+    "repeat": 1,
+    "agents": {
+      "live": 64,
+      "replayed": 0,
+      "failed": 0
+    },
+    "aggregate": {
+      "perSpecialist": [
+        {
+          "specialist": "security",
+          "goldCount": 15,
+          "foundCount": 27,
+          "truePositives": 11,
+          "missedConcepts": [
+            "row_leaks_all_columns",
+            "regex_injection",
+            "cross_tenant_leak",
+            "pii_in_logs"
+          ],
+          "nearMisses": 7,
+          "precision": 0.4074074074074074,
+          "recall": 0.7333333333333333,
+          "f1": 0.5238095238095238
+        },
+        {
+          "specialist": "correctness",
+          "goldCount": 23,
+          "foundCount": 49,
+          "truePositives": 18,
+          "missedConcepts": [
+            "float_money",
+            "replace_reenters_markup",
+            "returns_before_write_completes",
+            "no_error_handling",
+            "mutates_defaults"
+          ],
+          "nearMisses": 14,
+          "precision": 0.3673469387755102,
+          "recall": 0.782608695652174,
+          "f1": 0.5
+        },
+        {
+          "specialist": "tests",
+          "goldCount": 15,
+          "foundCount": 81,
+          "truePositives": 14,
+          "missedConcepts": [
+            "no_backoff_assertion"
+          ],
+          "nearMisses": 54,
+          "precision": 0.1728395061728395,
+          "recall": 0.9333333333333333,
+          "f1": 0.29166666666666663
+        },
+        {
+          "specialist": "style",
+          "goldCount": 14,
+          "foundCount": 59,
+          "truePositives": 9,
+          "missedConcepts": [
+            "magic_number",
+            "unsafe_cast",
+            "unchecked_form_cast",
+            "unclear_test_name",
+            "two_ways_same_check"
+          ],
+          "nearMisses": 28,
+          "precision": 0.15254237288135594,
+          "recall": 0.6428571428571429,
+          "f1": 0.2465753424657534
+        }
+      ],
+      "overall": {
+        "goldCount": 67,
+        "foundCount": 216,
+        "truePositives": 52,
+        "precision": 0.24074074074074073,
+        "recall": 0.7761194029850746,
+        "f1": 0.36749116607773846
+      },
+      "topMissedConcepts": [
+        {
+          "concept": "row_leaks_all_columns",
+          "misses": 1
+        },
+        {
+          "concept": "regex_injection",
+          "misses": 1
+        },
+        {
+          "concept": "cross_tenant_leak",
+          "misses": 1
+        },
+        {
+          "concept": "pii_in_logs",
+          "misses": 1
+        },
+        {
+          "concept": "float_money",
+          "misses": 1
+        },
+        {
+          "concept": "replace_reenters_markup",
+          "misses": 1
+        },
+        {
+          "concept": "returns_before_write_completes",
+          "misses": 1
+        },
+        {
+          "concept": "no_error_handling",
+          "misses": 1
+        },
+        {
+          "concept": "mutates_defaults",
+          "misses": 1
+        },
+        {
+          "concept": "no_backoff_assertion",
+          "misses": 1
+        },
+        {
+          "concept": "magic_number",
+          "misses": 1
+        },
+        {
+          "concept": "unsafe_cast",
+          "misses": 1
+        },
+        {
+          "concept": "unchecked_form_cast",
+          "misses": 1
+        },
+        {
+          "concept": "unclear_test_name",
+          "misses": 1
+        },
+        {
+          "concept": "two_ways_same_check",
+          "misses": 1
+        }
+      ],
+      "recallInterval": {
+        "low": 0.6629280717766178,
+        "high": 0.8593639148527074
+      }
+    },
+    "primedRecall": {
+      "caught": 38,
+      "total": 49,
+      "rate": 0.7755102040816326,
+      "interval": {
+        "low": 0.6412094381295426,
+        "high": 0.8697516228527138
+      }
+    },
+    "unprimedRecall": {
+      "caught": 14,
+      "total": 18,
+      "rate": 0.7777777777777778,
+      "interval": {
+        "low": 0.547849735476945,
+        "high": 0.9099921808661801
+      }
+    },
+    "cost": {
+      "model": "claude-sonnet-4-6",
+      "totalUsd": 0.72633,
+      "perSpecialist": {
+        "security": {
+          "inputTokens": 15864,
+          "outputTokens": 5078,
+          "usd": 0.123762
+        },
+        "correctness": {
+          "inputTokens": 15688,
+          "outputTokens": 8719,
+          "usd": 0.177849
+        },
+        "tests": {
+          "inputTokens": 15528,
+          "outputTokens": 12925,
+          "usd": 0.240459
+        },
+        "style": {
+          "inputTokens": 15640,
+          "outputTokens": 9156,
+          "usd": 0.18426
+        }
+      },
+      "agentRunsWithoutUsage": 0
+    },
+    "noisePerCleanDiff": {
+      "security": 0,
+      "correctness": 0.5,
+      "tests": 2,
+      "style": 0
+    },
+    "parallelism": {
+      "totalAgentMs": 862774,
+      "totalWallMs": 312833,
+      "speedup": 2.7579346190619667
+    }
   }
 ]

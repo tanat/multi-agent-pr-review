@@ -101,10 +101,52 @@ Three things worth reading out of that table:
   reader should trust least — style defects are the hardest to write unambiguous
   signals for.
 
-The 2.83× parallelism figure is unchanged from the previous corpus, which is the
-point: it is an arithmetic property of running four calls concurrently, not a
-measurement of whether four lenses are worth their cost. That question needs a
-leave-one-out ablation on cost per caught defect, which is not built yet.
+The parallelism figure (2.8×) is unchanged from the previous corpus, which is
+the point: it is an arithmetic property of running four calls concurrently,
+bounded above by four whatever the lenses find, and it says nothing about
+tokens — the fan-out costs 4× per review however well the calls overlap.
+
+## Does the four-way fan-out earn its cost?
+
+`pnpm eval:ablation` answers the marginal question the per-specialist table
+cannot: **which defects would go uncaught if this lens were not there?** It runs
+off the recordings, so it is free, and it deliberately drops the specialist
+partition — a defect counts as caught if any lens named it, wherever it was
+filed.
+
+All four lenses together catch **56 of 67** defects for **$0.73** (list price,
+`claude-sonnet-4-6`, whole corpus).
+
+| lens | caught | uniquely caught | cost | share of spend |
+|---|---|---|---|---|
+| security | 24 | 3 | $0.12 | 17% |
+| correctness | 37 | 4 | $0.18 | 24% |
+| tests | 39 | 6 | $0.24 | 33% |
+| style | 35 | 3 | $0.18 | 25% |
+
+**Every lens catches something no other lens catches, so none of them is
+redundant — but the margin is thin.** Dropping the cheapest-to-lose lens saves a
+sixth of the spend and costs three defects out of 67. The fan-out is justified
+by coverage, not by the speedup `DECISIONS.md` used to cite.
+
+Two things fall out of the same table that the design did not predict:
+
+- **40 of the 56 caught defects were found by more than one lens.** Seventy-one
+  per cent of what the fan-out produces is duplicate work. That is the cost side
+  of the argument — and also the raw material for a consensus signal, since
+  agreement between independently-prompted lenses is the strongest precision
+  evidence the system generates. It is currently discarded: the dedup key drops
+  the second copy instead of recording that two lenses agreed.
+- **The lenses do not stay in their lanes.** `style` names 35 defects across the
+  corpus while only 14 are filed as style gold; `tests` names 39 against 15. The
+  claim in `DECISIONS.md` that a focused prompt keeps a specialist on its own
+  lens is not what the recordings show.
+
+**Eleven defects were caught by nobody**, five of them classes no prompt names:
+`row_leaks_all_columns`, `float_money`, `magic_number`, `regex_injection`,
+`replace_reenters_markup`, `cross_tenant_leak`, `unsafe_cast`,
+`no_error_handling`, `no_backoff_assertion`, `mutates_defaults`,
+`two_ways_same_check`.
 
 ## Recordings
 

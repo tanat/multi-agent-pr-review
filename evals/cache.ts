@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Finding, Specialist } from '@/lib/schemas';
+import type { Usage } from '@/lib/models';
 
 /**
  * Recorded specialist runs, so changing how findings are scored, deduped or
@@ -37,6 +38,8 @@ export interface Recording {
   recordedAt: string;
   findings: Finding[];
   latencyMs: number;
+  /** Optional so recordings made before token capture still replay. */
+  usage?: Usage;
 }
 
 export interface RecordingKeyInput {
@@ -89,17 +92,19 @@ export function writeRecording(rec: Recording): void {
  */
 export async function withRecording(
   input: RecordingKeyInput,
-  live: () => Promise<{ findings: Finding[]; latencyMs: number }>,
-): Promise<{ findings: Finding[]; latencyMs: number; cached: boolean }> {
+  live: () => Promise<{ findings: Finding[]; latencyMs: number; usage: Usage }>,
+): Promise<{ findings: Finding[]; latencyMs: number; usage: Usage | null; cached: boolean }> {
   const mode = vcrMode();
   const key = recordingKey(input);
 
   if (mode === 'replay') {
     const hit = readRecording(key);
-    if (hit) return { findings: hit.findings, latencyMs: hit.latencyMs, cached: true };
+    if (hit) {
+      return { findings: hit.findings, latencyMs: hit.latencyMs, usage: hit.usage ?? null, cached: true };
+    }
   }
 
-  const { findings, latencyMs } = await live();
+  const { findings, latencyMs, usage } = await live();
 
   if (mode !== 'off') {
     writeRecording({
@@ -112,8 +117,9 @@ export async function withRecording(
       recordedAt: new Date().toISOString(),
       findings,
       latencyMs,
+      usage,
     });
   }
 
-  return { findings, latencyMs, cached: false };
+  return { findings, latencyMs, usage, cached: false };
 }

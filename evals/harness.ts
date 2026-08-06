@@ -12,7 +12,7 @@ import { renderDiff } from '../lib/github';
 import { SPECIALIST_PROMPT_VERSION, runSpecialist } from '../lib/specialists';
 import { SPECIALISTS, type Finding, type Specialist } from '../lib/schemas';
 import { MATCHER_VERSION, aggregate, scoreFixture, wilson, type SpecialistScore } from './score';
-import { MODEL_IDS, type ModelKey } from '../lib/models';
+import { MODEL_IDS, costOf, type ModelKey, type Usage } from '../lib/models';
 import { vcrMode, withRecording } from './cache';
 
 interface Args {
@@ -47,7 +47,7 @@ async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey
   const wall0 = performance.now();
   const timed = await Promise.all(
     SPECIALISTS.map(async (s) => {
-      const { findings, latencyMs, cached } = await withRecording(
+      const { findings, latencyMs, usage, cached } = await withRecording(
         {
           model: MODEL_IDS[modelKey],
           promptVersion: SPECIALIST_PROMPT_VERSION,
@@ -59,10 +59,10 @@ async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey
         async () => {
           const t = performance.now();
           const out = await runSpecialist(s, diff, modelKey, 'eval');
-          return { findings: out, latencyMs: performance.now() - t };
+          return { findings: out.findings, latencyMs: performance.now() - t, usage: out.usage };
         },
       );
-      return { s, findings, ms: latencyMs, cached, failed: false };
+      return { s, findings, ms: latencyMs, usage, cached, failed: false };
     }).map((p) =>
       // One specialist that fails to produce a parseable response must not
       // discard the whole sweep — the rest of this run is already paid for.
@@ -72,7 +72,7 @@ async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey
       // read as a well-behaved quiet lens.
       p.catch((err: unknown) => {
         console.warn(`  ! ${fixture.name}: a specialist failed — ${(err as Error).message.split('\n')[0]}`);
-        return { s: null, findings: [] as Finding[], ms: 0, cached: false, failed: true };
+        return { s: null, findings: [] as Finding[], ms: 0, usage: null as Usage | null, cached: false, failed: true };
       }),
     ),
   );
@@ -80,10 +80,19 @@ async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey
     Specialist,
     Finding[]
   >;
-  for (const r of timed) if (r.s) bySpecialist[r.s] = r.findings;
+  const usageBySpecialist = Object.fromEntries(SPECIALISTS.map((s) => [s, null])) as Record<
+    Specialist,
+    Usage | null
+  >;
+  for (const r of timed) {
+    if (!r.s) continue;
+    bySpecialist[r.s] = r.findings;
+    usageBySpecialist[r.s] = r.usage;
+  }
 
   return {
     bySpecialist,
+    usageBySpecialist,
     wallMs: performance.now() - wall0,
     sumMs: timed.reduce((a, r) => a + r.ms, 0),
     cachedCount: timed.filter((r) => r.cached).length,
@@ -132,10 +141,17 @@ async function main() {
   // Recall split by whether the specialist's own prompt names the defect class.
   const primed = { caught: 0, total: 0 };
   const unprimed = { caught: 0, total: 0 };
+  // Tokens per lens. The fan-out costs four calls per review whether or not the
+  // fourth lens contributes anything, and until now nothing in the repo
+  // recorded what that came to.
+  const tokens: Record<Specialist, Usage> = Object.fromEntries(
+    SPECIALISTS.map((s) => [s, { inputTokens: 0, outputTokens: 0 }]),
+  ) as Record<Specialist, Usage>;
+  let usageMissing = 0;
 
   for (let sample = 0; sample < repeat; sample++) {
     for (const [index, fx] of FIXTURES.entries()) {
-      const { bySpecialist, wallMs, sumMs, cachedCount, failedCount } = await reviewFixture(
+      const { bySpecialist, usageBySpecialist, wallMs, sumMs, cachedCount, failedCount } = await reviewFixture(
         fx,
         index,
         modelKey,
@@ -150,6 +166,16 @@ async function main() {
       if (cachedCount === 0) {
         totalWall += wallMs;
         totalSum += sumMs;
+      }
+
+      for (const s of SPECIALISTS) {
+        const u = usageBySpecialist[s];
+        if (!u) {
+          usageMissing += 1;
+          continue;
+        }
+        tokens[s].inputTokens += u.inputTokens;
+        tokens[s].outputTokens += u.outputTokens;
       }
 
       if (fx.gold.length === 0) {
@@ -220,6 +246,25 @@ async function main() {
     }
   }
 
+  const totalCost = SPECIALISTS.reduce((a, s) => a + costOf(modelKey, tokens[s]), 0);
+  if (totalCost > 0) {
+    console.log('\nCost per lens (list price, whole run):');
+    console.log('  specialist      in tok   out tok      cost   caught   $/caught');
+    for (const s of SPECIALISTS) {
+      const cost = costOf(modelKey, tokens[s]);
+      const caught = agg.perSpecialist.find((r) => r.specialist === s)!.truePositives;
+      const per = caught > 0 ? `$${(cost / caught).toFixed(4)}` : '       —';
+      console.log(
+        `  ${s.padEnd(12)} ${String(tokens[s].inputTokens).padStart(8)} ${String(tokens[s].outputTokens).padStart(9)} ` +
+          `  $${cost.toFixed(4)} ${String(caught).padStart(6)}   ${per.padStart(8)}`,
+      );
+    }
+    console.log(`  ${'TOTAL'.padEnd(12)} ${''.padStart(18)}   $${totalCost.toFixed(4)}`);
+    if (usageMissing > 0) {
+      console.log(`  (${usageMissing} agent runs replayed from recordings made before tokens were captured)`);
+    }
+  }
+
   const parallelism =
     totalWall > 0
       ? { totalAgentMs: Math.round(totalSum), totalWallMs: Math.round(totalWall), speedup: totalSum / totalWall }
@@ -251,6 +296,17 @@ async function main() {
     aggregate: agg,
     primedRecall: { ...primed, rate: primedRate, interval: wilson(primed.caught, primed.total) },
     unprimedRecall: { ...unprimed, rate: unprimedRate, interval: wilson(unprimed.caught, unprimed.total) },
+    cost: {
+      model: MODEL_IDS[modelKey],
+      totalUsd: totalCost,
+      perSpecialist: Object.fromEntries(
+        SPECIALISTS.map((s) => [
+          s,
+          { ...tokens[s], usd: costOf(modelKey, tokens[s]) },
+        ]),
+      ),
+      agentRunsWithoutUsage: usageMissing,
+    },
     noisePerCleanDiff: Object.fromEntries(
       SPECIALISTS.map((s) => [s, cleanRuns ? noise[s] / cleanRuns : null]),
     ),
