@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InvalidPrUrlError, parsePrUrl, renderDiff, type PrContext } from '../github';
+import { InvalidPrUrlError, MAX_PATCH_CHARS, parsePrUrl, renderDiff, type PrContext } from '../github';
 
 describe('parsePrUrl', () => {
   it('parses a canonical PR URL', () => {
@@ -54,6 +54,7 @@ function ctx(files: PrContext['files']): PrContext {
     owner: 'o',
     repo: 'r',
     number: 1,
+    headSha: 'deadbee',
     title: 'Title',
     body: null,
     author: 'someone',
@@ -79,21 +80,50 @@ describe('renderDiff', () => {
     expect(out).toContain('(no textual patch — binary or too large)');
   });
 
-  it('truncates a long patch silently — the specialist cannot tell', () => {
-    // Current behaviour, pinned deliberately. A patch over the cap is cut mid-diff
-    // with nothing to mark it, so an agent reviewing a large file reports on a
-    // fraction of it with full confidence and the run has no record that it
-    // happened. Phase 3 replaces this assertion with one that expects a marker.
+  it('says how much of a long patch it cut', () => {
+    // A specialist reviewing a silently-sliced patch reports on a fraction of
+    // the file with full confidence, and nothing downstream records that it
+    // happened. The marker is the cheapest fix: the model can hedge and a
+    // reader of the trace can see it.
     const huge = '+x'.repeat(5000); // 10k chars, over the 6000 cap
     const out = renderDiff(ctx([{ filename: 'big.ts', status: 'modified', additions: 5000, deletions: 0, patch: huge }]));
-    expect(out).not.toContain('truncated');
-    expect(out.length).toBeLessThan(huge.length);
+    expect(out).toContain('[patch truncated:');
+    expect(out).toContain('of 10000 characters not shown]');
   });
 
-  it('caps the PR description too', () => {
+  it('leaves a patch under the cap untouched and unmarked', () => {
+    const small = '@@ -1 +1 @@\n+ok';
+    const out = renderDiff(ctx([{ filename: 'a.ts', status: 'modified', additions: 1, deletions: 0, patch: small }]));
+    expect(out).toContain(small);
+    expect(out).not.toContain('truncated');
+  });
+
+  it('stops at the whole-diff budget instead of sending everything', () => {
+    // The per-file cap bounded nothing on its own: paginate walked every page,
+    // so a 300-file PR built ~1.8M characters and handed the same string to
+    // four models at once.
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      filename: `src/f${i}.ts`,
+      status: 'modified',
+      additions: 100,
+      deletions: 0,
+      patch: 'x'.repeat(5000),
+    }));
+    const out = renderDiff(ctx(many), MAX_PATCH_CHARS, 20_000);
+    expect(out.length).toBeLessThan(30_000);
+    expect(out).toContain('changed file(s) omitted');
+  });
+
+  it('announces a file list that was cut short by the page cap', () => {
+    const out = renderDiff({ ...ctx([]), truncatedFileList: true });
+    expect(out).toContain('more changed files than were fetched');
+  });
+
+  it('caps the PR description and says so', () => {
     const long = 'd'.repeat(3000);
     const out = renderDiff({ ...ctx([]), body: long });
     expect(out).toContain('d'.repeat(1000));
     expect(out).not.toContain('d'.repeat(1001));
+    expect(out).toContain('[description truncated]');
   });
 });

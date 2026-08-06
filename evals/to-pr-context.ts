@@ -49,6 +49,8 @@ export function toPrContext(fixture: Fixture, index: number): PrContext {
     owner: 'evals',
     repo: 'fixtures',
     number: index + 1,
+    // Fixtures are synthetic; the sha is a stable stand-in so the shape matches.
+    headSha: `fixture-${index + 1}`,
     title: fixture.name,
     // Deliberately null. A hand-written PR description would be another place
     // to accidentally name the defect, which is the contamination this corpus
