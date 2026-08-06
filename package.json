@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "eval": "tsx evals/harness.ts",
     "review": "tsx scripts/review-cli.ts",
     "db:start": "supabase start",
