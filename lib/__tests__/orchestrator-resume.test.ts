@@ -10,7 +10,7 @@ import type { Run, RunStatus } from '../schemas';
 
 const store = vi.hoisted(() => ({
   getRun: vi.fn(),
-  setStatus: vi.fn(async () => {}),
+  setStatus: vi.fn(async (_id: string, _status: string, _error?: string | null) => {}),
   getCompletedSpecialists: vi.fn(async () => [] as string[]),
   insertFindings: vi.fn(async () => {}),
   markSpecialistComplete: vi.fn(async () => {}),

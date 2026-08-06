@@ -34,6 +34,9 @@ yarn-error.log*
 .env*
 !.env.example
 
+# VCR cache (eval replay, gitignored — regenerate with EVAL_VCR=record)
+evals/cache/
+
 # agent memory (lives in ~/.claude, never in the repo)
 memory/
 

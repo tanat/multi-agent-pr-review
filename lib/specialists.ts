@@ -3,6 +3,14 @@ import { SpecialistOutput, type Finding, type Specialist } from './schemas';
 import { modelFor, type ModelKey } from './models';
 
 /**
+ * Bumped whenever a lens or the shared instruction below changes. It is part of
+ * the eval cache key, so editing a prompt invalidates every recording made
+ * under the old wording instead of silently scoring new prompts against old
+ * generations.
+ */
+export const SPECIALIST_PROMPT_VERSION = 'v1.0.0' as const;
+
+/**
  * Each specialist reviews the SAME diff through a different lens. They run in
  * parallel (see the orchestrator) and never see each other's output — the
  * orchestrator merges and dedups afterwards.
