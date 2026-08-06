@@ -56,5 +56,191 @@
       "totalWallMs": 48565,
       "speedup": 2.8267883022416043
     }
+  },
+  {
+    "runId": "2026-08-06T20:00:53.007Z",
+    "model": "claude-sonnet-4-6",
+    "promptVersion": "v1.1.0",
+    "matcherVersion": "v2.0.0-concept",
+    "corpus": "cb825292ca13",
+    "gitSha": "bfc2d11",
+    "fixtures": 16,
+    "cleanFixtures": 2,
+    "repeat": 1,
+    "agents": {
+      "live": 64,
+      "replayed": 0,
+      "failed": 0
+    },
+    "aggregate": {
+      "perSpecialist": [
+        {
+          "specialist": "security",
+          "goldCount": 15,
+          "foundCount": 28,
+          "truePositives": 11,
+          "missedConcepts": [
+            "row_leaks_all_columns",
+            "regex_injection",
+            "cross_tenant_leak",
+            "extension_check_unused"
+          ],
+          "nearMisses": 11,
+          "precision": 0.39285714285714285,
+          "recall": 0.7333333333333333,
+          "f1": 0.5116279069767441
+        },
+        {
+          "specialist": "correctness",
+          "goldCount": 23,
+          "foundCount": 50,
+          "truePositives": 18,
+          "missedConcepts": [
+            "float_money",
+            "local_timezone_dependence",
+            "returns_before_write_completes",
+            "no_error_handling",
+            "mutates_defaults"
+          ],
+          "nearMisses": 13,
+          "precision": 0.36,
+          "recall": 0.782608695652174,
+          "f1": 0.4931506849315068
+        },
+        {
+          "specialist": "tests",
+          "goldCount": 15,
+          "foundCount": 76,
+          "truePositives": 14,
+          "missedConcepts": [
+            "no_backoff_assertion"
+          ],
+          "nearMisses": 49,
+          "precision": 0.18421052631578946,
+          "recall": 0.9333333333333333,
+          "f1": 0.30769230769230765
+        },
+        {
+          "specialist": "style",
+          "goldCount": 14,
+          "foundCount": 60,
+          "truePositives": 9,
+          "missedConcepts": [
+            "regex_rebuilt_in_loop",
+            "sequential_await_loop",
+            "unchecked_form_cast",
+            "unclear_test_name",
+            "two_ways_same_check"
+          ],
+          "nearMisses": 24,
+          "precision": 0.15,
+          "recall": 0.6428571428571429,
+          "f1": 0.24324324324324323
+        }
+      ],
+      "overall": {
+        "goldCount": 67,
+        "foundCount": 214,
+        "truePositives": 52,
+        "precision": 0.24299065420560748,
+        "recall": 0.7761194029850746,
+        "f1": 0.3701067615658363
+      },
+      "topMissedConcepts": [
+        {
+          "concept": "row_leaks_all_columns",
+          "misses": 1
+        },
+        {
+          "concept": "regex_injection",
+          "misses": 1
+        },
+        {
+          "concept": "cross_tenant_leak",
+          "misses": 1
+        },
+        {
+          "concept": "extension_check_unused",
+          "misses": 1
+        },
+        {
+          "concept": "float_money",
+          "misses": 1
+        },
+        {
+          "concept": "local_timezone_dependence",
+          "misses": 1
+        },
+        {
+          "concept": "returns_before_write_completes",
+          "misses": 1
+        },
+        {
+          "concept": "no_error_handling",
+          "misses": 1
+        },
+        {
+          "concept": "mutates_defaults",
+          "misses": 1
+        },
+        {
+          "concept": "no_backoff_assertion",
+          "misses": 1
+        },
+        {
+          "concept": "regex_rebuilt_in_loop",
+          "misses": 1
+        },
+        {
+          "concept": "sequential_await_loop",
+          "misses": 1
+        },
+        {
+          "concept": "unchecked_form_cast",
+          "misses": 1
+        },
+        {
+          "concept": "unclear_test_name",
+          "misses": 1
+        },
+        {
+          "concept": "two_ways_same_check",
+          "misses": 1
+        }
+      ],
+      "recallInterval": {
+        "low": 0.6629280717766178,
+        "high": 0.8593639148527074
+      }
+    },
+    "primedRecall": {
+      "caught": 39,
+      "total": 49,
+      "rate": 0.7959183673469388,
+      "interval": {
+        "low": 0.6636272988905617,
+        "high": 0.8851827295718618
+      }
+    },
+    "unprimedRecall": {
+      "caught": 13,
+      "total": 18,
+      "rate": 0.7222222222222222,
+      "interval": {
+        "low": 0.49126922453805477,
+        "high": 0.8750043085364453
+      }
+    },
+    "noisePerCleanDiff": {
+      "security": 0,
+      "correctness": 0.5,
+      "tests": 1.5,
+      "style": 0
+    },
+    "parallelism": {
+      "totalAgentMs": 877585,
+      "totalWallMs": 310520,
+      "speedup": 2.826178758646673
+    }
   }
 ]
