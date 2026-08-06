@@ -3,7 +3,7 @@
 **[Live demo →](https://multi-agent-pr-review.vercel.app)**
 
 > Paste a GitHub PR URL. Four specialist agents — **security, correctness, tests,
-> style** — review the diff **in parallel**, an orchestrator dedups and merges
+> style** — review the diff **in parallel**, an orchestrator dedups and stores
 > their findings, and **you approve each finding** before anything is published.
 > The whole run is a durable state machine: it survives a restart and the
 > hours-long human pause, then **resumes from its checkpoint**.
@@ -55,15 +55,33 @@ a human for hours and pick up exactly where it left off.
 Adversarial: PR diffs with **deliberately planted bugs** (`evals/`). The harness
 runs the real specialists and scores findings against the gold set.
 
-| Metric | Result (sonnet) |
-| --- | --- |
-| Recall (planted bugs caught) | **1.00** (8/8) |
-| Precision | 0.19 (heavy over-flagging) |
-| Parallelism speedup | **2.83×** (137s of agent work in 48s wall) |
+16 fixtures, 67 planted defects, 2 of them clean diffs with nothing planted.
 
-Low precision is expected — and it's *why the product has a human approval step*.
-The models also flag real, un-planted issues, so precision is a lower bound. Full
-methodology and honesty notes in [evals/README.md](./evals/README.md).
+| Metric | Result (`claude-sonnet-4-6`) |
+| --- | --- |
+| Recall (planted defects caught) | **77.6%** (52/67), 95% CI [66.3%, 85.9%] |
+| Precision | 24.3% — a lower bound |
+| Cost of a full sweep | $0.73 at list price |
+| Caught by classes the prompt names / does not name | 79.6% / 72.2% |
+
+This table used to read **Recall 1.00 (8/8)**, and that number was the best
+evidence in the repo that its own eval was broken. Matching was location only —
+same file, within three lines — so a remark about variable naming scored as the
+SQL injection planted beside it. The fixtures already described each defect and
+nothing read the description. A finding now has to be in the right place *and*
+name the defect; `evals/__tests__/score.test.ts` contains the test that made the
+old behaviour visible, still named after what it found.
+
+Low precision is expected, and it is *why the product has a human approval step*.
+The models also flag real, un-planted issues, so precision is a lower bound — the
+one unambiguous noise figure is findings per clean diff, where nothing was
+planted at all.
+
+`pnpm eval:ablation` answers the question the per-lens table cannot: **which
+defects go uncaught if this lens is not there?** Every lens catches 3-6 defects
+no other lens finds, so none is redundant — but 40 of the 56 caught defects were
+found by more than one lens, so 71% of what the fan-out produces is duplicate
+work. Full methodology in [evals/README.md](./evals/README.md).
 
 ## Stack
 

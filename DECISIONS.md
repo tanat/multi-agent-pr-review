@@ -1,6 +1,6 @@
 # Decisions
 
-Four forks where I picked one path over a defensible alternative.
+Six forks where I picked one path over a defensible alternative.
 Format: *I chose X over Y because Z, and the cost of Z is W.*
 
 ---
@@ -76,12 +76,77 @@ most impressive beat is behind a flag.
 **Alternative.** One prompt that asks a single model to do all four reviews and
 return everything.
 
-**Why.** Separate agents are the architecture being demonstrated — they run
-*concurrently* (measured 2.83× wall-clock speedup), each gets a focused prompt that
-keeps it on its lens, and the eval can score precision/recall *per specialist* to
-see which lens carries its weight. A single mega-prompt collapses all of that into
-one opaque call and tends to under-cover the lenses it's least "interested" in.
+**Why.** This entry used to justify itself with a 2.83× wall-clock speedup, and
+that number cannot support the claim. It is an arithmetic property of running
+four calls concurrently — bounded above by four whatever the lenses find — and it
+says nothing about tokens, which is where the fan-out actually costs 4×.
 
-**Cost.** 4× the requests (and tokens) per review, plus a dedup step for findings
-two specialists both raise. The parallel fan-out hides the latency; the token cost
-is the real price, paid for sharper, separately-measurable coverage.
+The measurement that does support it is `pnpm eval:ablation`, which drops the
+per-specialist partition and asks the marginal question: **which defects go
+uncaught if this lens is not there?** Over 16 fixtures and 67 planted defects,
+every lens catches something no other lens catches — 3, 4, 6 and 3 respectively.
+So none of the four is redundant, and a single mega-prompt would lose real
+coverage.
+
+**Cost.** 4× the tokens: $0.73 for the whole corpus at list price, split
+17/24/33/25 across security, correctness, tests and style. The margin is thinner
+than this entry originally implied — dropping the cheapest-to-lose lens saves a
+sixth of the spend and costs three defects out of 67.
+
+Two things the recordings show that this decision did not predict:
+
+- **71% of the output is duplicate work.** 40 of the 56 caught defects were found
+  by more than one lens. That is the strongest argument against the fan-out and,
+  at the same time, the raw material for a consensus signal the system currently
+  throws away (see decision 5).
+- **The lenses do not stay in their lanes.** The claim that "a focused prompt
+  keeps it on its lens" is not what the data shows: `style` names 35 defects
+  across the corpus against 14 filed as style gold, `tests` 39 against 15.
+
+
+---
+
+## 5. Deterministic term matching in the eval, not a model judge
+
+**Picked.** A finding counts as catching a planted defect when it lands in the
+right place *and* contains one of the `signals` phrases written for that defect.
+Plain term overlap, no model call.
+
+**Alternative.** An LLM judge reading each finding against each gold entry.
+
+**Why.** A judge reads intent better — that is not in dispute. It also costs a
+call per pair, makes the score move between runs on identical input, and, if it
+comes from the same family as the reviewers, has errors correlated with the
+errors being measured. The deterministic matcher makes a full re-score free,
+which is the property that mattered most here: the previous scorer went
+unexamined for months precisely because checking it meant paying for a full
+sweep.
+
+**Cost.** A finding phrased entirely outside a gold entry's signals scores as a
+miss even when it is right, so recall is a slight under-estimate. `nearMisses`
+counts findings that landed on a planted defect while describing something else,
+so the size of that blind spot is visible rather than assumed.
+
+---
+
+## 6. Consensus between lenses is not built yet, on purpose
+
+**Picked.** The dedup key stays as it is — a storage-level idempotency key with a
+unique index behind it — and no consensus signal ships until it is shown to be
+worth something.
+
+**Alternative.** Merge findings across lenses now and surface "3 of 4 specialists
+agree" in the UI. It is the obvious feature, and the ablation says the raw
+material exists: 40 of 56 caught defects were found by more than one lens.
+
+**Why.** All four lenses call the same model through the same shared instruction
+block, so their errors are correlated and agreement means less than
+independent-voter intuition suggests. The claim worth shipping is not "we merge
+duplicates" but "agreement predicts that a human approves the finding", and that
+is a measurement nobody has taken. Building the feature first would produce a
+confident number with nothing behind it.
+
+**Cost.** The product looks less finished than it could, and duplicate findings
+reach the human. If the lift turns out not to be real, the honest outcome is to
+publish the null result — which is a better artefact than the feature would have
+been.

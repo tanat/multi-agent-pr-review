@@ -61,12 +61,30 @@ PostgREST API.
   specialists *not* already in `meta.completed`, in parallel. Each one persists
   its findings (`INSERT … ON CONFLICT (run_id, dedup_key) DO NOTHING`) and is then
   added to `meta.completed`. When all four are done → `awaiting_approval`. Re-entry
-  is a no-op past that state. So a crash mid-review loses nothing: completed
-  specialists are skipped and idempotent inserts dedupe the rest.
-- **`publishRun`** publishes only `approved && !published` findings and flips
-  `published`, so re-running never double-posts.
-- **`resumeRun`** inspects `status` and re-drives the right step — the recovery
-  entry point after a restart.
+  is a no-op past that state. Findings and the completion marker are written in
+  one transaction — a crash between them re-ran the specialist, and its
+  differently-worded second answer produced different dedup keys, so
+  `ON CONFLICT` did not suppress the duplicates. The four run under
+  `Promise.allSettled`, so one failing lens no longer resolves the outer await
+  while its siblings are still writing into a run already marked failed.
+- **`publishRun`** claims a publish attempt id, writes it into the comment body,
+  looks for a comment already carrying that marker, and only posts if there is
+  none. That is what makes publishing exactly-once across a crash: the previous
+  order — post, then mark the rows published — left a live comment and rows
+  saying otherwise if the process died between the two, and the retry posted a
+  second one. `published` is only set when something was really posted;
+  output-only mode renders a preview and touches nothing.
+- **Every transition is compare-and-swap** (`UPDATE … WHERE id = $1 AND status
+  IN $2 RETURNING`). Two concurrent publishes used to both read the status, both
+  decide it was safe, and both post — no crash required.
+- **`resumeRun`** branches on `status` *and* `failed_stage`. `failed` alone
+  records that a run died but never where, so resume used to send every failure
+  back through the review stage; a publish failure was silently rewound to
+  `awaiting_approval` with its error erased and never retried.
+- **The run records `head_sha`.** A pause that outlives a push is the case this
+  project exists to handle, and until now resuming would fetch the new head and
+  re-review a different diff while stored findings pointed at line numbers that
+  had moved. Drift is refused; an operator can accept the new head explicitly.
 
 The "pause for a human" is just the `awaiting_approval` state sitting in Postgres;
 nothing is held in memory, so the wait can be arbitrarily long.
@@ -80,9 +98,22 @@ shows up as a span; the orchestrator wraps the `Promise.all` in
 `propagateAttributes({ sessionId, tags })` so all four group under one Langfuse
 trace per run.
 
-Dedup happens in JS via `dedupKey(file, line, normalized-title)` and is enforced
-at the DB by the unique index — so two specialists flagging the same line collapse
-to one finding.
+Dedup happens in JS via `dedupKey(file, line, first-six-title-words)` and is
+enforced at the DB by the unique index. Two limits worth stating plainly, because
+the word "dedup" oversells what this does:
+
+- It only collapses findings whose titles normalise to the same six words *and*
+  whose reported lines match exactly. Two lenses describing the same SQL
+  injection in different words, or one line apart, produce two rows.
+- When keys do collide, `ON CONFLICT DO NOTHING` drops the second row. Nothing
+  merges: the fact that two independently-prompted lenses agreed — the strongest
+  precision signal the system produces — is discarded, and which row survives
+  depends on which of four concurrent inserts committed first.
+
+The ablation measures how much this costs: 40 of 56 caught defects were found by
+more than one lens. Turning that agreement into a consensus signal is the open
+work, and it is gated on showing that agreement actually predicts human
+approval.
 
 ## API surface (`app/api/`)
 
