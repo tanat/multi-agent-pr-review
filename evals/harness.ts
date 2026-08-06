@@ -62,15 +62,32 @@ async function reviewFixture(fixture: Fixture, index: number, modelKey: ModelKey
           return { findings: out, latencyMs: performance.now() - t };
         },
       );
-      return { s, findings, ms: latencyMs, cached };
-    }),
+      return { s, findings, ms: latencyMs, cached, failed: false };
+    }).map((p) =>
+      // One specialist that fails to produce a parseable response must not
+      // discard the whole sweep — the rest of this run is already paid for.
+      // The failure is counted rather than swallowed: a lens that returns
+      // nothing because it crashed is a different fact from one that returned
+      // nothing because it found nothing, and averaging them together would
+      // read as a well-behaved quiet lens.
+      p.catch((err: unknown) => {
+        console.warn(`  ! ${fixture.name}: a specialist failed — ${(err as Error).message.split('\n')[0]}`);
+        return { s: null, findings: [] as Finding[], ms: 0, cached: false, failed: true };
+      }),
+    ),
   );
-  const bySpecialist = Object.fromEntries(timed.map((r) => [r.s, r.findings])) as Record<Specialist, Finding[]>;
+  const bySpecialist = Object.fromEntries(SPECIALISTS.map((s) => [s, [] as Finding[]])) as Record<
+    Specialist,
+    Finding[]
+  >;
+  for (const r of timed) if (r.s) bySpecialist[r.s] = r.findings;
+
   return {
     bySpecialist,
     wallMs: performance.now() - wall0,
     sumMs: timed.reduce((a, r) => a + r.ms, 0),
     cachedCount: timed.filter((r) => r.cached).length,
+    failedCount: timed.filter((r) => r.failed).length,
   };
 }
 
@@ -106,6 +123,7 @@ async function main() {
   let totalSum = 0;
   let cachedAgents = 0;
   let liveAgents = 0;
+  let failedAgents = 0;
 
   // Findings emitted on a diff with nothing planted. The only place in the
   // corpus where a false positive is unambiguous — everywhere else, a finding
@@ -117,12 +135,18 @@ async function main() {
 
   for (let sample = 0; sample < repeat; sample++) {
     for (const [index, fx] of FIXTURES.entries()) {
-      const { bySpecialist, wallMs, sumMs, cachedCount } = await reviewFixture(fx, index, modelKey, sample);
+      const { bySpecialist, wallMs, sumMs, cachedCount, failedCount } = await reviewFixture(
+        fx,
+        index,
+        modelKey,
+        sample,
+      );
       const scores = scoreFixture(bySpecialist, fx.gold);
       allScores.push(scores);
 
       cachedAgents += cachedCount;
-      liveAgents += SPECIALISTS.length - cachedCount;
+      failedAgents += failedCount;
+      liveAgents += SPECIALISTS.length - cachedCount - failedCount;
       if (cachedCount === 0) {
         totalWall += wallMs;
         totalSum += sumMs;
@@ -205,7 +229,10 @@ async function main() {
       ? `\nParallelism: ${totalSum.toFixed(0)}ms of agent work in ${totalWall.toFixed(0)}ms wall = ${parallelism.speedup.toFixed(2)}×.`
       : '\nParallelism: not measured — every fixture was replayed from cache.',
   );
-  console.log(`Agents: ${liveAgents} live, ${cachedAgents} replayed.`);
+  console.log(
+    `Agents: ${liveAgents} live, ${cachedAgents} replayed` +
+      (failedAgents ? `, ${failedAgents} FAILED to return a usable response.` : '.'),
+  );
 
   const out = {
     runId: process.env.EVAL_RUN_ID ?? new Date().toISOString(),
@@ -220,7 +247,7 @@ async function main() {
     fixtures: FIXTURES.length,
     cleanFixtures: clean.length,
     repeat,
-    agents: { live: liveAgents, replayed: cachedAgents },
+    agents: { live: liveAgents, replayed: cachedAgents, failed: failedAgents },
     aggregate: agg,
     primedRecall: { ...primed, rate: primedRate, interval: wilson(primed.caught, primed.total) },
     unprimedRecall: { ...unprimed, rate: unprimedRate, interval: wilson(unprimed.caught, unprimed.total) },

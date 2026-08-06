@@ -1,5 +1,5 @@
 import { generateObject } from 'ai';
-import { SpecialistOutput, type Finding, type Specialist } from './schemas';
+import { SpecialistOutput, normaliseFinding, type Finding, type Specialist } from './schemas';
 import { modelFor, type ModelKey } from './models';
 
 /**
@@ -8,7 +8,7 @@ import { modelFor, type ModelKey } from './models';
  * under the old wording instead of silently scoring new prompts against old
  * generations.
  */
-export const SPECIALIST_PROMPT_VERSION = 'v1.0.0' as const;
+export const SPECIALIST_PROMPT_VERSION = 'v1.1.0' as const;
 
 /**
  * Each specialist reviews the SAME diff through a different lens. They run in
@@ -39,7 +39,8 @@ const SHARED =
   'return the file path, the 1-based line in the new file (or null), a severity, a one-line ' +
   'title, a rationale grounded in the diff, and a concrete suggestion (or null). Be skeptical: ' +
   'a false positive is worse than a missed nit. Return an empty findings array if your lens ' +
-  'turns up nothing. At most 20 findings, highest severity first.';
+  'turns up nothing. At most 20 findings, highest severity first. Keep the title under 120 ' +
+  'characters — a headline, not a paragraph; put the reasoning in the rationale.';
 
 /** Run one specialist over the diff and return its findings (structured). */
 export async function runSpecialist(
@@ -61,5 +62,5 @@ export async function runSpecialist(
       metadata: { runId, specialist, modelKey },
     },
   });
-  return object.findings;
+  return object.findings.map(normaliseFinding);
 }

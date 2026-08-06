@@ -6,6 +6,21 @@ export type Specialist = (typeof SPECIALISTS)[number];
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
 export type Severity = (typeof SEVERITIES)[number];
 
+/**
+ * How long a title may be before it stops being scannable in the UI.
+ *
+ * This is a presentation rule, and it used to be enforced on the wire as
+ * `.max(120)`. `generateObject` validates the whole response against one
+ * schema, so a single verbose title threw the entire array away — nineteen
+ * usable findings discarded because the twentieth was wordy. It killed a real
+ * eval run on a finding that was correct and well argued, and in the app it
+ * takes down a whole specialist, whose failure marks the run failed.
+ *
+ * The wire schema now says what a specialist may send; the limit is applied
+ * afterwards, where the cost of an over-long title is an over-long title.
+ */
+export const TITLE_DISPLAY_LIMIT = 120;
+
 /** One issue a specialist flags in the diff. */
 export const Finding = z.object({
   file: z.string().describe('Repo-relative path of the file the issue is in'),
@@ -16,17 +31,37 @@ export const Finding = z.object({
     .nullable()
     .describe('1-based line in the new file, or null if not line-specific'),
   severity: z.enum(SEVERITIES),
-  title: z.string().min(4).max(120).describe('One-line summary of the issue'),
-  rationale: z.string().min(10).describe('Why this is a problem, grounded in the diff'),
-  suggestion: z.string().nullable().describe('Concrete fix, or null if none'),
+  // Still bounded — these land in a database and on a page, so "no limit" is
+  // not an option — but bounded well above where a model writes, so the cap
+  // catches runaway output rather than ordinary verbosity.
+  title: z.string().min(4).max(400).describe('One-line summary of the issue'),
+  rationale: z.string().min(10).max(4000).describe('Why this is a problem, grounded in the diff'),
+  suggestion: z.string().max(4000).nullable().describe('Concrete fix, or null if none'),
 });
 export type Finding = z.infer<typeof Finding>;
 
 /** What each specialist agent returns (the structured-output contract). */
 export const SpecialistOutput = z.object({
-  findings: z.array(Finding).max(20),
+  findings: z.array(Finding).max(50),
 });
 export type SpecialistOutput = z.infer<typeof SpecialistOutput>;
+
+/** Cut a title to display length on a word boundary, once, after validation. */
+export function truncateTitle(title: string, limit = TITLE_DISPLAY_LIMIT): string {
+  if (title.length <= limit) return title;
+  const cut = title.slice(0, limit - 1);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${(lastSpace > limit * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
+/**
+ * Apply the presentation rules a specialist's output has to satisfy before it
+ * is stored or shown. Kept separate from parsing so that failing them costs
+ * one field rather than the whole response.
+ */
+export function normaliseFinding(f: Finding): Finding {
+  return { ...f, title: truncateTitle(f.title) };
+}
 
 export const RUN_STATUSES = [
   'reviewing',
