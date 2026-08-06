@@ -162,6 +162,32 @@ export function renderDiff(
 }
 
 /**
+ * Find a comment this run already posted, identified by a marker in its body.
+ *
+ * Read-only, and the reason publishing can be exactly-once: the attempt id is
+ * claimed and written into the comment before the comment is sent, so a retry
+ * after a crash recognises its own earlier post instead of adding a second one.
+ * Uses the read token — checking must work even when the write token does not.
+ */
+export async function findCommentByMarker(
+  owner: string,
+  repo: string,
+  number: number,
+  attemptId: string,
+): Promise<{ url: string } | null> {
+  const marker = `multi-agent-review:${attemptId}`;
+  const gh = octokit();
+  const comments = await gh.paginate(gh.rest.issues.listComments, {
+    owner,
+    repo,
+    issue_number: number,
+    per_page: 100,
+  });
+  const hit = comments.find((c) => c.body?.includes(marker));
+  return hit ? { url: hit.html_url } : null;
+}
+
+/**
  * Post approved findings as a PR comment. Mutating — only called when the user
  * explicitly opts in (PUBLISH_MODE=github + a write-scoped token). Default
  * publish mode is output-only.

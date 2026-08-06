@@ -75,6 +75,17 @@ export type RunStatus = (typeof RUN_STATUSES)[number];
 export const DECISIONS = ['pending', 'approved', 'rejected'] as const;
 export type Decision = (typeof DECISIONS)[number];
 
+/**
+ * Which stage a failed run died in.
+ *
+ * `failed` on its own records that a run died but never where, so resume had
+ * nothing to branch on and sent every failure back through the review stage —
+ * including publish failures, which came back looking like ordinary runs
+ * awaiting approval.
+ */
+export const FAILED_STAGES = ['reviewing', 'publishing'] as const;
+export type FailedStage = (typeof FAILED_STAGES)[number];
+
 /** A finding as stored, with orchestration metadata. */
 export interface StoredFinding extends Finding {
   id: string;
@@ -93,7 +104,15 @@ export interface Run {
   number: number;
   title: string | null;
   status: RunStatus;
+  /** Display id of the model, e.g. claude-sonnet-4-6. */
   model: string;
+  /** The key resume needs to reach the same model. Null on rows created before it was stored. */
+  modelKey: string | null;
+  /** The commit that was reviewed, so a resume can tell the branch moved. */
+  headSha: string | null;
+  failedStage: FailedStage | null;
+  publishAttemptId: string | null;
+  publishedCommentUrl: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
